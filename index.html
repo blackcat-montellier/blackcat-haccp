@@ -269,6 +269,10 @@ function App(){
   const [authed,setAuthed]=useState(()=>localStorage.getItem("bc_auth")==="1");
   if(!authed) return <LoginScreen onLogin={()=>setAuthed(true)}/>;
   if(!isConfigured) return <SetupScreen/>;
+  return <AppMain onLogout={()=>{ localStorage.removeItem("bc_auth"); setAuthed(false); }}/>;
+}
+
+function AppMain({onLogout}){
 
   const [tab,        setTab]       = useState("dash");
   const [autoOpen,   setAutoOpen]  = useState(false);
