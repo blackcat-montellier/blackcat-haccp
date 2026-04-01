@@ -734,7 +734,10 @@ function Dashboard({temps,huiles,ncs,cellules,services,nettoyages,onShortcut}){
           </button>
           {csvReady&&(
             <div style={{background:"#fefce8",border:"2px solid #f59e0b",borderRadius:12,padding:"12px 14px",display:"flex",flexDirection:"column",gap:6}}>
-              <div style={{fontSize:15,fontWeight:900,color:"#92400e"}}>✅ ZIP téléchargé — {csvReady.zipName}</div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                <div style={{fontSize:15,fontWeight:900,color:"#92400e"}}>✅ ZIP téléchargé — {csvReady.zipName}</div>
+                <button onClick={()=>setCsvReady(null)} style={{background:"transparent",border:"none",color:"#92400e",fontSize:20,cursor:"pointer",padding:"0 4px",lineHeight:1,flexShrink:0}}>✕</button>
+              </div>
               <div style={{fontSize:13,color:"#92400e",lineHeight:1.5}}>
                 📎 <b>Le mail est ouvert.</b> Joignez le fichier ZIP depuis votre dossier <b>Téléchargements</b> avant d'envoyer.
               </div>
