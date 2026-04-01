@@ -538,7 +538,14 @@ const buildCSV=(rows,cols,maps)=>{
 const dlAll=async(temps,huiles,services,cellules,ncs,setCsvReady)=>{
   const moisPrec=new Date(); moisPrec.setDate(0);
   const mois=`${moisPrec.getFullYear()}-${String(moisPrec.getMonth()+1).padStart(2,'0')}`;
-  const inM=(iso)=>iso&&(iso.startsWith(mois));
+  const inM=(iso)=>{
+    if(!iso) return false;
+    if(typeof iso==="number"){
+      const d=new Date(iso);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`===mois;
+    }
+    return String(iso).startsWith(mois);
+  };
   const nomMois=new Date(moisPrec.getFullYear(),moisPrec.getMonth(),1).toLocaleDateString("fr-FR",{month:"long",year:"numeric"});
   const fichiers=[
     [temps.filter(t=>inM(t.ts)),
@@ -570,7 +577,65 @@ const dlAll=async(temps,huiles,services,cellules,ncs,setCsvReady)=>{
     if(!csv) return;
     zip.file(name,csv); nbFichiers++;
   });
-  if(nbFichiers===0){ alert("Aucune donnée pour le mois précédent."); return; }
+  // Diagnostic : compter toutes les données dispo par mois
+  const moisCourant=`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
+  const totalData=temps.length+huiles.length+services.length+cellules.length+ncs.length;
+  if(nbFichiers===0){
+    const moisDispos=[...new Set([
+      ...temps.map(r=>r.ts?.slice(0,7)),
+      ...services.map(r=>r.ts?.slice(0,7)),
+      ...huiles.map(r=>r.ts?.slice(0,7)),
+    ].filter(Boolean))].sort();
+    const msg=`Aucune donnée pour ${nomMois} (recherche : ${mois}).\n\n`+
+      `Total en base : ${totalData} enregistrements.\n`+
+      (moisDispos.length ? `Mois disponibles : ${moisDispos.join(", ")}\n\n` : "Aucun mois trouvé.\n\n")+
+      `Voulez-vous exporter le mois en cours (${moisCourant}) à la place ?`;
+    if(window.confirm(msg)){
+      // Re-exécuter avec mois courant
+      const moisAlt=moisCourant;
+      const inMAlt=(iso)=>iso&&iso.startsWith(moisAlt);
+      const zip2=new JSZip(); let n2=0;
+      fichiers.forEach(([rows,cols,maps,name])=>{
+        const rowsAlt=rows.filter?rows:rows; // déjà filtré plus haut, recalculer
+      });
+      // Recalcul propre avec le mois courant
+      const fichiersAlt=[
+        [temps.filter(t=>inMAlt(t.ts)),
+         ["Date","Heure","Unité","Temp (°C)","Conforme","Agent","Note"],
+         {Date:r=>fDate(r.ts),Heure:r=>fTime(r.ts),"Unité":r=>r.unite,"Temp (°C)":r=>r.temp,Conforme:r=>r.ok?"OUI":"NON",Agent:r=>r.agent,Note:r=>r.note||""},
+         `temperatures_${moisAlt}.csv`],
+        [services.filter(s=>inMAlt(s.ts)),
+         ["Date","Heure","Poste","Plat","Temp (°C)","Conforme (≥63°C)","Agent"],
+         {Date:r=>fDate(r.ts),Heure:r=>fTime(r.ts),Poste:r=>r.poste,Plat:r=>r.plat||"—","Temp (°C)":r=>r.temp,"Conforme (≥63°C)":r=>r.ok?"OUI":"NON",Agent:r=>r.agent},
+         `service_chaud_${moisAlt}.csv`],
+        [huiles.filter(h=>inMAlt(h.ts)),
+         ["Date","Heure","Friteuse","TPM (%)","Couleur","Odeur","Mousse","Décision","Agent"],
+         {Date:r=>fDate(r.ts),Heure:r=>fTime(r.ts),Friteuse:r=>r.friteuse,"TPM (%)":r=>r.tpm,Couleur:r=>r.col,Odeur:r=>r.odeur,Mousse:r=>r.mousse,"Décision":r=>r.decision,Agent:r=>r.agent},
+         `huiles_${moisAlt}.csv`],
+        [cellules.filter(c=>inMAlt(c.tsDebut)&&c.statut==="terminé"),
+         ["Date","Début","Fin","Produit","Qté","T° départ","T° fin","Durée (min)","Conforme","Agent"],
+         {Date:r=>fDate(r.tsDebut),"Début":r=>fTime(r.tsDebut),Fin:r=>r.tsFin?fTime(r.tsFin):"—",Produit:r=>r.produit,"Qté":r=>r.qte||"—","T° départ":r=>r.tDepart,"T° fin":r=>r.tFin||"—","Durée (min)":r=>r.dureeMin||"—",Conforme:r=>r.ok?"OUI":"NON",Agent:r=>r.agent},
+         `cellule_${moisAlt}.csv`],
+        [ncs.filter(n=>inMAlt(n.ts)),
+         ["Date","Heure","Catégorie","Description","Action corrective","Agent","Statut"],
+         {Date:r=>fDate(r.ts),Heure:r=>fTime(r.ts),"Catégorie":r=>r.categorie,Description:r=>r.description,"Action corrective":r=>r.action||"",Agent:r=>r.agent,Statut:r=>r.statut},
+         `nonconformites_${moisAlt}.csv`],
+      ];
+      fichiersAlt.forEach(([rows,cols,maps,name])=>{ const csv=buildCSV(rows,cols,maps); if(csv){zip2.file(name,csv);n2++;} });
+      if(n2===0){ alert("Aucune donnée non plus pour le mois courant."); return; }
+      const nomMoisAlt=new Date().toLocaleDateString("fr-FR",{month:"long",year:"numeric"});
+      const zipNameAlt=`HACCP_BlackCat_${moisAlt}.zip`;
+      const blobAlt=await zip2.generateAsync({type:"blob"});
+      const aAlt=document.createElement("a"); aAlt.href=URL.createObjectURL(blobAlt); aAlt.download=zipNameAlt; aAlt.click();
+      if(setCsvReady) setCsvReady({zipName:zipNameAlt,nomMois:nomMoisAlt});
+      setTimeout(()=>{
+        const sujet=encodeURIComponent(`HACCP The Black Cat — Relevés ${nomMoisAlt}`);
+        const corps=encodeURIComponent(`Bonjour,\n\nVeuillez trouver en pièce jointe les relevés HACCP de ${nomMoisAlt}.\n\n⚠️ Pensez à joindre le fichier ZIP depuis votre dossier Téléchargements.\n\nCordialement,\nThe Black Cat`);
+        window.location.href=`mailto:${EMAIL_1},${EMAIL_2}?subject=${sujet}&body=${corps}`;
+      },1500);
+    }
+    return;
+  }
   const blob=await zip.generateAsync({type:"blob"});
   const zipName=`HACCP_BlackCat_${mois}.zip`;
   const a=document.createElement("a");
