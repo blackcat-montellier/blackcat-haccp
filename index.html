@@ -11,6 +11,7 @@
   <title>HACCP — The Black Cat</title>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -534,12 +535,12 @@ const buildCSV=(rows,cols,maps)=>{
   const csv=[cols.join(","),...rows.map(r=>cols.map(k=>`"${String((maps[k]?.(r))??"").replace(/"/g,'""')}"`).join(","))].join("\n");
   return "\uFEFF"+csv;
 };
-const dlAll=(temps,huiles,services,cellules,ncs)=>{
-  const moisPrec=new Date(); moisPrec.setDate(0); // dernier jour mois précédent
+const dlAll=async(temps,huiles,services,cellules,ncs,setCsvReady)=>{
+  const moisPrec=new Date(); moisPrec.setDate(0);
   const mois=new Date(moisPrec.getFullYear(),moisPrec.getMonth(),1).toISOString().slice(0,7);
   const inM=(iso)=>iso&&(iso.startsWith(mois));
   const nomMois=new Date(moisPrec.getFullYear(),moisPrec.getMonth(),1).toLocaleDateString("fr-FR",{month:"long",year:"numeric"});
-  [
+  const fichiers=[
     [temps.filter(t=>inM(t.ts)),
      ["Date","Heure","Unité","Temp (°C)","Conforme","Agent","Note"],
      {Date:r=>fDate(r.ts),Heure:r=>fTime(r.ts),"Unité":r=>r.unite,"Temp (°C)":r=>r.temp,Conforme:r=>r.ok?"OUI":"NON",Agent:r=>r.agent,Note:r=>r.note||""},
@@ -560,27 +561,37 @@ const dlAll=(temps,huiles,services,cellules,ncs)=>{
      ["Date","Heure","Catégorie","Description","Action corrective","Agent","Statut"],
      {Date:r=>fDate(r.ts),Heure:r=>fTime(r.ts),"Catégorie":r=>r.categorie,Description:r=>r.description,"Action corrective":r=>r.action||"",Agent:r=>r.agent,Statut:r=>r.statut},
      `nonconformites_${mois}.csv`],
-  ].forEach(([rows,cols,maps,name])=>{
+  ];
+  // Générer le ZIP avec JSZip
+  const zip=new JSZip();
+  let nbFichiers=0;
+  fichiers.forEach(([rows,cols,maps,name])=>{
     const csv=buildCSV(rows,cols,maps);
     if(!csv) return;
-    const a=document.createElement("a");
-    a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8;"}));
-    a.download=name; a.click();
+    zip.file(name,csv); nbFichiers++;
   });
-  // Ouvrir le mail après 2s (laisser le temps aux téléchargements)
+  if(nbFichiers===0){ alert("Aucune donnée pour le mois précédent."); return; }
+  const blob=await zip.generateAsync({type:"blob"});
+  const zipName=`HACCP_BlackCat_${mois}.zip`;
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download=zipName; a.click();
+  if(setCsvReady) setCsvReady({zipName,nomMois});
+  // Ouvrir le mail après 1.5s
   setTimeout(()=>{
     const sujet=encodeURIComponent(`HACCP The Black Cat — Relevés ${nomMois}`);
     const corps=encodeURIComponent(
-      `Bonjour,\n\nVeuillez trouver ci-joint les relevés HACCP du mois de ${nomMois}.\n\n`+
-      `Fichiers joints :\n• Températures frigos/congélos\n• Températures service chaud\n`+
+      `Bonjour,\n\nVeuillez trouver en pièce jointe le fichier ZIP des relevés HACCP du mois de ${nomMois}.\n\n`+
+      `Le fichier "${zipName}" contient :\n• Températures frigos/congélos\n• Températures service chaud\n`+
       `• Contrôles huiles friture\n• Cycles cellule de refroidissement\n`+
-      `• Non-conformités\n\nCordialement,\nThe Black Cat`
+      `• Non-conformités\n\n`+
+      `⚠️ Pensez à joindre le fichier ZIP depuis votre dossier Téléchargements.\n\nCordialement,\nThe Black Cat`
     );
     window.location.href=`mailto:${EMAIL_1},${EMAIL_2}?subject=${sujet}&body=${corps}`;
-  },2000);
+  },1500);
 };
 
 function Dashboard({temps,huiles,ncs,cellules,services,nettoyages,onShortcut}){
+  const [csvReady,setCsvReady]=React.useState(null);
   const today=todayS();
   const heure=new Date().getHours();
   const tAuj=temps.filter(t=>sameKDay(t.ts));
@@ -649,14 +660,26 @@ function Dashboard({temps,huiles,ncs,cellules,services,nettoyages,onShortcut}){
             <span style={{fontSize:28}}>📧</span>
             <div>
               <div style={{fontSize:17,fontWeight:900,color:"#1e293b"}}>Envoi mensuel HACCP</div>
-              <div style={{fontSize:13,color:"#1e293b",fontWeight:600}}>Début {moisCourant} — exporter et envoyer les relevés du mois précédent</div>
+              <div style={{fontSize:13,color:"#1e293b",fontWeight:600}}>Début {moisCourant} — relevés du mois précédent</div>
             </div>
           </div>
-          <button onClick={()=>dlAll(temps,huiles,services,cellules,ncs)}
-            style={{background:"#1d4ed8",border:"none",borderRadius:12,padding:"14px",color:"#fff",fontFamily:"inherit",fontSize:16,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-            <span>📥</span> Télécharger tous les CSV + ouvrir le mail
+          <button onClick={()=>{ setCsvReady(null); dlAll(temps,huiles,services,cellules,ncs,setCsvReady); }}
+            style={{background:"#1d4ed8",border:"none",borderRadius:12,padding:"14px",color:"#fff",fontFamily:"inherit",fontSize:16,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,minHeight:52}}>
+            <span>📦</span> Générer le ZIP + ouvrir le mail
           </button>
-          <div style={{fontSize:12,color:"#1e293b"}}>Les fichiers se téléchargent, puis votre appli mail s'ouvre avec le message pré-rédigé.</div>
+          {csvReady&&(
+            <div style={{background:"#fefce8",border:"2px solid #f59e0b",borderRadius:12,padding:"12px 14px",display:"flex",flexDirection:"column",gap:6}}>
+              <div style={{fontSize:15,fontWeight:900,color:"#92400e"}}>✅ ZIP téléchargé — {csvReady.zipName}</div>
+              <div style={{fontSize:13,color:"#92400e",lineHeight:1.5}}>
+                📎 <b>Le mail est ouvert.</b> Joignez le fichier ZIP depuis votre dossier <b>Téléchargements</b> avant d'envoyer.
+              </div>
+            </div>
+          )}
+          {!csvReady&&(
+            <div style={{fontSize:12,color:"#475569",lineHeight:1.5}}>
+              Un fichier ZIP est téléchargé dans vos <b>Téléchargements</b>. Le mail s'ouvre automatiquement — pensez à joindre le ZIP avant d'envoyer.
+            </div>
+          )}
         </div>
       )}
 
