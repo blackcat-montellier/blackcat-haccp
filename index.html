@@ -368,7 +368,7 @@ function AppMain({onLogout}){
     };
     const notifInterval=setInterval(checkNotif,15*60*1000);
     setTimeout(checkNotif,3000); // premier check 3s après ouverture
-    return()=>{unsubs.forEach(fn=>fn()); unsubAgents(); unsubFourns(); unsubUnites(); unsubPnd(); clearInterval(notifInterval);};
+    return()=>{unsubs.forEach(fn=>fn()); unsubAgents(); clearInterval(notifInterval);};
   },[]);
   const save=async(key,set,data)=>{set(data);lsSave(key,data);setSyncing(true);await dbSave(key,data);setSyncing(false);};
   const saveAgents=(arr)=>{setAgents(arr);agentsSave(arr);};
