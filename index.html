@@ -657,6 +657,7 @@ const dlAll=async(temps,huiles,services,cellules,ncs,setCsvReady)=>{
 
 function Dashboard({temps,huiles,ncs,cellules,services,nettoyages,onShortcut}){
   const [csvReady,setCsvReady]=React.useState(null);
+  const [mensuelMasque,setMensuelMasque]=React.useState(false);
   const today=todayS();
   const heure=new Date().getHours();
   const tAuj=temps.filter(t=>sameKDay(t.ts));
@@ -719,14 +720,15 @@ function Dashboard({temps,huiles,ncs,cellules,services,nettoyages,onShortcut}){
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
 
       {/* ── RAPPEL MENSUEL ── */}
-      {showMensuel&&(
+      {showMensuel&&!mensuelMasque&&(
         <div style={{background:"#f0f7ff",border:"2px solid #3b82f6",borderRadius:16,padding:16,display:"flex",flexDirection:"column",gap:10}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <span style={{fontSize:28}}>📧</span>
-            <div>
+            <div style={{flex:1}}>
               <div style={{fontSize:17,fontWeight:900,color:"#1e293b"}}>Envoi mensuel HACCP</div>
               <div style={{fontSize:13,color:"#1e293b",fontWeight:600}}>Début {moisCourant} — relevés du mois précédent</div>
             </div>
+            <button onClick={()=>setMensuelMasque(true)} style={{background:"transparent",border:"none",color:"#64748b",fontSize:22,cursor:"pointer",padding:"0 4px",lineHeight:1,flexShrink:0}}>✕</button>
           </div>
           <button onClick={()=>{ setCsvReady(null); dlAll(temps,huiles,services,cellules,ncs,setCsvReady); }}
             style={{background:"#1d4ed8",border:"none",borderRadius:12,padding:"14px",color:"#fff",fontFamily:"inherit",fontSize:16,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,minHeight:52}}>
@@ -1408,6 +1410,152 @@ function Timer({tsDebut}){
 // ══════════════════════════════════════════════
 // MODULE RÉCEPTION
 // ══════════════════════════════════════════════
+const isSameMonth=(iso)=>{const d=new Date(iso);const n=new Date();return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();};
+const isWithin7Days=(iso)=>{return(Date.now()-new Date(iso).getTime())<7*24*3600*1000;};
+function ModuleNettoyage({nettoyages,onSave,autoOpen,agents,pndPlan:pndProp}){
+  const [mode,setMode]=useState("today");
+  const [agent,setAgent]=useState((agents||AGENTS_DEFAULT)[0]);
+
+  useEffect(()=>{ if(autoOpen) setMode("today"); },[autoOpen]);
+
+  const today=todayS();
+  const PND_PLAN=pndProp||PND_DEFAULT;
+  const nAuj=nettoyages.filter(n=>sameKDay(n.ts));
+  const isValidatedToday=(id)=>nAuj.some(n=>n.tacheId===id);
+  // Hebdo = fait dans les 7 derniers jours, Mensuel = fait ce mois civil
+  const isValidatedPeriod=(tache)=>{
+    const prev=nettoyages.filter(n=>n.tacheId===tache.id);
+    if(!prev.length) return null;
+    const last=prev.sort((a,b)=>new Date(b.ts)-new Date(a.ts))[0];
+    if(tache.freq==="Journalier") return isValidatedToday(tache.id)?last:null;
+    if(tache.freq==="Hebdomadaire") return isWithin7Days(last.ts)?last:null;
+    if(tache.freq==="Mensuel") return isSameMonth(last.ts)?last:null;
+    return null;
+  };
+  const toggle=async(tache)=>{
+    const done=isValidatedPeriod(tache);
+    if(done){
+      // Seulement déverrouillable pour journalier
+      if(tache.freq!=="Journalier") return;
+      await onSave(nettoyages.filter(n=>!(n.tacheId===tache.id&&new Date(n.ts).toDateString()===today)));
+    } else {
+      await onSave([...nettoyages,{id:Date.now(),ts:ts(),tacheId:tache.id,zone:tache.zone,tache:tache.tache,freq:tache.freq,agent}]);
+    }
+  };
+  const isValidated=(id)=>!!isValidatedPeriod(PND_PLAN.find(p=>p.id===id)||{});
+  const csv=()=>dlCSV(nettoyages.map(n=>({"Date":fDate(n.ts),"Heure":fTime(n.ts),"Zone":n.zone,"Tâche":n.tache,"Fréquence":n.freq,"Agent":n.agent})),`nettoyage_${new Date().toISOString().slice(0,10)}.csv`);
+  const FREQS=["Journalier","Hebdomadaire","Mensuel"];
+  const grouped=FREQS.map(f=>({freq:f,taches:PND_PLAN.filter(p=>p.freq===f)}));
+  const totalJour=PND_PLAN.filter(p=>p.freq==="Journalier").length;
+  const doneJour=PND_PLAN.filter(p=>p.freq==="Journalier"&&isValidated(p.id)).length;
+  const byDate={};
+  nettoyages.forEach(n=>{ const d=fDate(n.ts); if(!byDate[d]) byDate[d]=[]; byDate[d].push(n); });
+  const histDates=Object.keys(byDate).sort((a,b)=>new Date(b.split("/").reverse().join("-"))-new Date(a.split("/").reverse().join("-")));
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <R2><span style={{fontSize:28,fontWeight:900,color:"#1e293b"}}>🧹 Nettoyage & Désinfection</span><button className="btnS" onClick={csv}>↓ CSV</button></R2>
+      <div style={{background:"#ffffff",border:`2px solid ${doneJour===totalJour?"#22c55e":"#1e293b"}`,borderRadius:14,padding:"14px 16px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+          <div style={{fontSize:15,fontWeight:800,color:"#64748b",textTransform:"uppercase",letterSpacing:.8}}>Tâches du jour</div>
+          <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:20,fontWeight:700,color:doneJour===totalJour?"#22c55e":"#f59e0b"}}>{doneJour}/{totalJour}</div>
+        </div>
+        <div style={{height:12,background:"#1e293b",borderRadius:6,overflow:"hidden"}}><div style={{height:"100%",borderRadius:6,background:doneJour===totalJour?"#22c55e":"#f59e0b",width:`${Math.round(doneJour/totalJour*100)}%`,transition:"width .4s"}}/></div>
+        <div style={{fontSize:14,color:doneJour===totalJour?"#22c55e":"#f59e0b",marginTop:8,fontWeight:700}}>
+          {doneJour===totalJour?"✅ Toutes les tâches du jour sont faites !":
+           `${totalJour-doneJour} tâche${totalJour-doneJour>1?"s":""} restante${totalJour-doneJour>1?"s":""}`}
+        </div>
+      </div>
+      <FB label="Qui valide ?"><ChipR opts={agents||AGENTS_DEFAULT} active={agent} onChange={setAgent}/></FB>
+      <TBar opts={[{id:"today",label:"✅ Checklist"},{id:"plan",label:"📋 Plan complet"},{id:"hist",label:"🕐 Historique"}]} active={mode} onChange={setMode}/>
+      {mode==="today"&&(
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {grouped.map(({freq,taches})=>(
+            <div key={freq}>
+              <div style={{fontSize:14,fontWeight:900,textTransform:"uppercase",letterSpacing:1.5,marginBottom:8,marginTop:4,
+                color:freq==="Journalier"?"#f59e0b":freq==="Hebdomadaire"?"#60a5fa":"#a78bfa"}}>{freq}</div>
+              {taches.map(t=>{
+                const val=isValidatedPeriod(t);
+                const done=!!val;
+                const locked=done&&t.freq!=="Journalier";
+                return(
+                  <div key={t.id} className={`pndRow${done?" done":""}`}
+                    onClick={()=>!locked&&toggle(t)}
+                    style={{opacity:1,cursor:locked?"default":"pointer"}}>
+                    <div style={{display:"flex",alignItems:"flex-start",gap:14}}>
+                      <div style={{width:30,height:30,borderRadius:8,
+                        border:`3px solid ${done?"#22c55e":"#cbd5e1"}`,
+                        background:done?"#22c55e":"transparent",
+                        display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:2,transition:"all .2s"}}>
+                        {done&&<span style={{color:"#fff",fontWeight:900,fontSize:16}}>{locked?"🔒":"✓"}</span>}
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:16,fontWeight:700,color:done?"#15803d":"#1e293b",lineHeight:1.3}}>{t.zone} — {t.tache}</div>
+                        <div style={{fontSize:13,color:"#64748b",marginTop:4,lineHeight:1.5}}>{t.moment} · {t.produit} ({t.dilution})</div>
+                        {done&&val&&(
+                          <div style={{fontSize:13,color:"#16a34a",marginTop:4,fontWeight:700,display:"flex",alignItems:"center",gap:6}}>
+                            ✓ Fait le {fDate(val.ts)} à {fTime(val.ts)} · {val.agent}
+                            {locked&&<span style={{fontSize:11,color:"#94a3b8",fontWeight:600}}>
+                              {t.freq==="Hebdomadaire"?"(verrouillé 7 jours)":"(verrouillé ce mois)"}
+                            </span>}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+      {mode==="plan"&&(
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{background:"#f0f7ff",border:"1px solid #93c5fd",borderRadius:12,padding:"10px 14px",fontSize:14,color:"#1e293b",fontWeight:600}}>Document de référence · CE 852/2004 Annexe II Ch. I · Arrêté 21/12/2009</div>
+          {grouped.map(({freq,taches})=>(
+            <div key={freq}>
+              <div style={{fontSize:14,fontWeight:900,textTransform:"uppercase",letterSpacing:1.5,marginBottom:8,color:freq==="Journalier"?"#f59e0b":freq==="Hebdomadaire"?"#60a5fa":"#a78bfa"}}>{freq} — {taches.length} tâches</div>
+              <div className="card" style={{padding:14}}>
+                {taches.map((t,i)=>(
+                  <div key={t.id} style={{padding:"12px 0",borderBottom:i<taches.length-1?"1px solid #e2e8f0":"none"}}>
+                    <div style={{fontSize:16,fontWeight:700,color:"#1e293b"}}>{t.zone} — {t.tache}</div>
+                    <div style={{fontSize:13,color:"#94a3b8",marginTop:4,lineHeight:1.7}}>🕐 {t.moment} · 🧴 {t.produit} ({t.dilution})</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {mode==="hist"&&(
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {histDates.length===0?<div className="card"><Empty/></div>:histDates.map(d=>{
+            const items=byDate[d];
+            const jourT=items.filter(i=>PND_PLAN.find(p=>p.id===i.tacheId)?.freq==="Journalier");
+            const pct=totalJour>0?Math.round(jourT.length/totalJour*100):0;
+            return(
+              <div key={d} className="card" style={{padding:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                  <div style={{fontSize:16,fontWeight:700}}>{d}</div>
+                  <div style={{fontSize:14,fontWeight:900,color:pct===100?"#22c55e":"#f59e0b"}}>{jourT.length}/{totalJour} jour. · {pct}%</div>
+                </div>
+                {items.map((n,i)=>(
+                  <div key={i} style={{fontSize:13,color:"#64748b",borderTop:"1px solid #e2e8f0",padding:"6px 0"}}>
+                    <span style={{color:"#64748b",fontWeight:700}}>{n.zone}</span> — {n.tache} · {fTime(n.ts)} · {n.agent}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════
+// MODULE NC
+// ══════════════════════════════════════════════
+
 function ModuleNC({ncs,onSave,autoOpen,agents}){
   const [showForm,setShowForm]=useState(false);
   const [edit,setEdit]=useState(null);
